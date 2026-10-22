@@ -52,6 +52,30 @@ env:
   # Keep kubelet probe hits out of the logs
   LOGS__IGNORE__PING: "true"
 
+# Probes are httpGet, run by the kubelet, so they don't depend on a shell or wget in the image.
+# /ping is excluded from logs (LOGS__IGNORE__PING). echo-server has no dependencies, so both probes
+# can share one endpoint. Readiness reacts faster than liveness: dropping traffic is cheap, a restart isn't.
+# timeoutSeconds 2 (default 1) avoids false failures during GC pauses or CPU contention at a 50m request.
+
+# Restart after ~30s of failures
+livenessProbe:
+  httpGet:
+    path: /ping
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+# Out of the Service after ~15s of failures; the first check waits for Node to start listening
+readinessProbe:
+  httpGet:
+    path: /ping
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+
 service:
   type: ClusterIP
   port: 5678

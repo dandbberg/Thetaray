@@ -112,7 +112,7 @@ Listening on port 80.
 ```
 
 1. **Wrong port.** echo-server reads its port from the `PORT` env var and ignored the chart's `-port` argument, so it listened on 80 instead of 5678. I now set `PORT` from a `containerPort` value.
-2. **Liveness probe used `/bin/bash`**, which the Alpine image doesn't have. It now runs the same `wget` check with `/bin/sh` (busybox).
+2. **Liveness probe used `/bin/bash`**, which the Alpine image doesn't have. Both probes are now HTTP checks on `/ping`.
 3. **The Service was UDP.** HTTP needs TCP.
 4. **Resource requests of 6 CPUs and 1Mi memory.** Changed to 50m CPU and 128Mi requests with a 256Mi memory limit. That's a starting point based on idle usage (about 26Mi), not a load test. I left out a CPU limit to avoid throttling short bursts.
 5. **The HPA used `autoscaling/v2beta1`**, which was removed in Kubernetes 1.25. Moved to `autoscaling/v2`. Autoscaling stays off: there's no metrics-server here, and 2 replicas are enough.
