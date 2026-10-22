@@ -17,6 +17,8 @@ fullnameOverride: ""
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
+  # The app never talks to the Kubernetes API, so don't mount a token
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -25,19 +27,30 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
 
 # Port the echo server listens on inside the container (passed as $PORT)
 containerPort: 5678
+
+# Extra environment for echo-server (see https://github.com/Ealenn/Echo-Server#configuration)
+env:
+  # Disable ?echo_file= / x-echo-file, which lets any client read files from the container
+  ENABLE__FILE: "false"
+  LOGS__LEVEL: info
+  # Keep kubelet probe hits out of the logs
+  LOGS__IGNORE__PING: "true"
 
 service:
   type: ClusterIP
