@@ -92,6 +92,19 @@ podDisruptionBudget:
   enabled: true
   maxUnavailable: 1
 
+# Only the ingress controller (and opted-in clients) may reach the pods; no egress
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespace: ingress-nginx
+    podLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/component: controller
+  # Additional NetworkPolicyPeer entries allowed to reach the pods
+  extraIngressFrom: []
+  # Egress rules, if the app ever needs any (default: deny all)
+  extraEgress: []
+
 nodeSelector: {}
 
 tolerations: []

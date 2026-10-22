@@ -2,14 +2,33 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ include "http-echo.fullname" . }}-test-connection"
+  # Not the app's selector labels: otherwise the Service and NetworkPolicy would select this pod too
   labels:
-    {{- include "http-echo.labels" . | nindent 4 }}
+    helm.sh/chart: {{ include "http-echo.chart" . }}
+    app.kubernetes.io/name: {{ include "http-echo.name" . }}-test
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    # Allowed through the NetworkPolicy
+    {{ include "http-echo.fullname" . }}-client: "true"
   annotations:
     "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: wget
-      image: busybox
+      image: busybox:1.36
       command: ['wget']
-      args: ['{{ include "http-echo.fullname" . }}:{{ .Values.service.port }}']
+      args: ['-q', '-O', '-', '-T', '5', 'http://{{ include "http-echo.fullname" . }}:{{ .Values.service.port }}/ping']
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
   restartPolicy: Never
