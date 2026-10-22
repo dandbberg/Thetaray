@@ -33,12 +33,13 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - -port
-            - "{{ .Values.service.port }}"
+          env:
+            # echo-server reads its listen port from PORT (default 80); it has no "-port" flag.
+            - name: PORT
+              value: {{ .Values.containerPort | quote }}
           ports:
             - name: http
-              containerPort: 5678
+              containerPort: {{ .Values.containerPort }}
               protocol: TCP
           livenessProbe:
             exec:
