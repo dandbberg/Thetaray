@@ -1,0 +1,39 @@
+# Local CA for *.k8s-server.local, managed by cert-manager.
+#
+#   selfsigned-bootstrap (ClusterIssuer) --signs--> k8s-server-local-ca (CA Certificate)
+#   ca-issuer (ClusterIssuer, uses that CA) --signs--> per-Ingress certificates
+#
+# For production, replace ca-issuer with an ACME (Let's Encrypt) or corporate-CA
+# ClusterIssuer of the same name; the chart only references the issuer by name.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: k8s-server-local-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: k8s-server.local Local CA
+  secretName: k8s-server-local-ca
+  duration: 87600h # 10y
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: ca-issuer
+spec:
+  ca:
+    secretName: k8s-server-local-ca
