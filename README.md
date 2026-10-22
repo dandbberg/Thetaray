@@ -59,3 +59,75 @@ Do the same test from previous step with https (https://http-echo.k8s-server.loc
 * Please provide a working solution, **submitted as a new git local branch**, and in the comment please provide a short description which explains any important issue or comments about your work 
 
 
+
+---
+
+## My solution
+
+I fixed the chart's port configuration, probes, Service protocol, resource requests, and deprecated HPA API. I added TLS through cert-manager and basic container hardening. The commands below reproduce the lab on macOS with Docker Desktop.
+
+### How to run it
+
+```bash
+# cluster and ingress controller
+minikube start --driver=docker
+minikube addons enable ingress
+
+# cert-manager and the local CA (needed for https)
+helm repo add jetstack https://charts.jetstack.io && helm repo update
+helm upgrade --install cert-manager jetstack/cert-manager --version v1.21.2 \
+  -n cert-manager --create-namespace -f deploy/cert-manager/values.yaml --wait
+kubectl apply -f deploy/cert-manager/cluster-issuer.yaml
+
+# the app
+helm upgrade --install http-echo . -n http-echo --create-namespace --wait
+kubectl -n http-echo wait --for=condition=Ready certificate/http-echo-tls --timeout=120s
+helm test http-echo -n http-echo
+```
+
+On macOS with the docker driver, `minikube ip` isn't reachable from the host. So run `minikube tunnel` in a separate terminal (it asks for sudo) and add `127.0.0.1 http-echo.k8s-server.local` to `/etc/hosts`. Then:
+
+```bash
+kubectl -n http-echo get secret http-echo-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+curl -L --cacert ca.crt http://http-echo.k8s-server.local/
+```
+
+HTTP redirects to HTTPS. Curl needs `-L` to follow the redirect and `--cacert` to trust the lab CA.
+
+### What was broken
+
+The original chart, deployed as-is:
+
+```console
+$ kubectl -n http-echo get pods,svc
+pod/http-echo-75d449b66-sn7l8   0/1     Running   0   60s
+service/http-echo   ClusterIP   10.97.112.141   5678/UDP
+
+$ kubectl -n http-echo describe pod ...    # Events
+Liveness probe errored: exec: "/bin/bash": stat /bin/bash: no such file or directory
+Readiness probe failed: ... dial tcp 10.244.0.6:5678: connect: connection refused
+
+$ kubectl -n http-echo logs ...
+Listening on port 80.
+```
+
+1. **Wrong port.** echo-server reads its port from the `PORT` env var and ignored the chart's `-port` argument, so it listened on 80 instead of 5678. I now set `PORT` from a `containerPort` value.
+2. **Liveness probe used `/bin/bash`**, which the Alpine image doesn't have. Both probes are now HTTP checks on `/ping`.
+3. **The Service was UDP.** HTTP needs TCP.
+4. **Resource requests of 6 CPUs and 1Mi memory.** Changed to 50m CPU and 128Mi requests with a 256Mi memory limit. That's a starting point based on idle usage (about 26Mi), not a load test. I left out a CPU limit to avoid throttling short bursts.
+5. **The HPA used `autoscaling/v2beta1`**, which was removed in Kubernetes 1.25. Moved to `autoscaling/v2`. Autoscaling stays off: there's no metrics-server here, and 2 replicas are enough.
+6. **The helm test used an unpinned busybox image** and never cleaned up. I pinned it and added a delete policy.
+
+### Other changes
+
+- **Hardening:** the container runs as non-root with a read-only filesystem, no capabilities and no service account token. I turned off echo-server's `?echo_file=` feature, which lets anyone read files from the container.
+- **Availability:** 2 replicas, rolling updates that keep both serving, and a PodDisruptionBudget. On minikube both pods share one node, so this only shows the setup.
+- **NetworkPolicy:** only the ingress controller can reach the pods, plus pods labelled `http-echo-client=true` (used by the helm test). Outgoing traffic is blocked. I tested it on minikube 1.39, Kubernetes 1.37 and kindnet `v20260820`, which enforces it. If yours doesn't, use `minikube start --cni=calico`.
+
+### TLS
+
+cert-manager creates a local CA (`deploy/cert-manager/`) and issues a 90-day certificate for the Ingress, which it renews automatically. The local CA is only for this lab, because no public CA issues certificates for `.local`. That's why the check uses `curl --cacert` instead of trusting the CA on the machine. In production you'd need a real domain and an issuer like Let's Encrypt.
+
+### Limitations
+
+Everything runs on one node, so the availability settings aren't really exercised. Resource values aren't load-tested. The local CA has no tested rollover plan. echo-server echoes request headers and its environment, so it shouldn't be given secrets or be exposed publicly. There's no monitoring yet.

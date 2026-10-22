@@ -1,0 +1,28 @@
+# Values for jetstack/cert-manager (pinned in README: v1.21.2)
+crds:
+  enabled: true
+  keep: true
+
+# Small footprint for a local / small cluster
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+webhook:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+cainjector:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi

@@ -2,7 +2,7 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: ealen/echo-server
@@ -17,6 +17,8 @@ fullnameOverride: ""
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
+  # The app never talks to the Kubernetes API, so don't mount a token
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -25,16 +27,54 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Port the echo server listens on inside the container (passed as $PORT)
+containerPort: 5678
+
+# Extra environment for echo-server (see https://github.com/Ealenn/Echo-Server#configuration)
+env:
+  # Disable ?echo_file= / x-echo-file, which lets any client read files from the container
+  ENABLE__FILE: "false"
+  LOGS__LEVEL: info
+  # Keep kubelet probe hits out of the logs
+  LOGS__IGNORE__PING: "true"
+
+# Probes are httpGet, run by the kubelet, so they don't depend on a shell or wget in the image.
+# /ping is excluded from logs (LOGS__IGNORE__PING). echo-server has no dependencies, so both probes
+# can share one endpoint. Readiness reacts faster than liveness: dropping traffic is cheap, a restart isn't.
+# timeoutSeconds 2 (default 1) avoids false failures during GC pauses or CPU contention at a 50m request.
+
+# Restart after ~30s of failures
+livenessProbe:
+  httpGet:
+    path: /ping
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+# Out of the Service after ~15s of failures; the first check waits for Node to start listening
+readinessProbe:
+  httpGet:
+    path: /ping
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
 
 service:
   type: ClusterIP
@@ -43,40 +83,61 @@ service:
 ingress:
   enabled: true
   className: "nginx"
-  annotations: {}
-    # kubernetes.io/ingress.class: nginx
-    # kubernetes.io/tls-acme: "true"
+  annotations:
+    # cert-manager issues and renews the TLS secret below (see deploy/cert-manager/)
+    cert-manager.io/cluster-issuer: ca-issuer
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
   hosts:
     - host: http-echo.k8s-server.local
       paths:
         - path: /
-          pathType: ImplementationSpecific
-  tls: []
-  #  - secretName: chart-example-tls
-  #    hosts:
-  #      - chart-example.local
+          pathType: Prefix
+  tls:
+    - secretName: http-echo-tls
+      hosts:
+        - http-echo.k8s-server.local
 
-resources: 
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 8
-  #   memory: 10Mi
-   requests:
-     cpu: "6"
-     memory: "1Mi"
+# Sized for a small Node.js echo server.
+# No CPU limit on purpose, to avoid throttling short bursts; the request reserves capacity.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
 
 autoscaling:
   enabled: false
-  minReplicas: 1
-  maxReplicas: 100
+  minReplicas: 2
+  maxReplicas: 10
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Only the ingress controller (and opted-in clients) may reach the pods; no egress
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespace: ingress-nginx
+    podLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/component: controller
+  # Additional NetworkPolicyPeer entries allowed to reach the pods
+  extraIngressFrom: []
+  # Egress rules, if the app ever needs any (default: deny all)
+  extraEgress: []
 
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
+
+# Spread replicas across nodes (soft, so a single-node cluster still schedules)
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
