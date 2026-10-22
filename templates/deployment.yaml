@@ -44,7 +44,7 @@ spec:
           livenessProbe:
             exec:
               command:
-                - /bin/bash
+                - /bin/sh
                 - -c
                 - "wget --spider -q http://localhost:{{ .Values.service.port }}"
           readinessProbe:
